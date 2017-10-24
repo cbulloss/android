@@ -1,73 +1,130 @@
-/* ownCloud Android client application
- *   Copyright (C) 2012 Bartek Przybylski
- *   Copyright (C) 2012-2013 ownCloud Inc.
+/**
+ *  ownCloud Android client application
  *
- *   This program is free software: you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License version 2,
- *   as published by the Free Software Foundation.
+ *  @author David A. Velasco
+ *  @author masensio
+ *  Copyright (C) 2012 Bartek Przybylski
+ *  Copyright (C) 2016 ownCloud GmbH.
  *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU General Public License for more details.
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License version 2,
+ *  as published by the Free Software Foundation.
  *
- *   You should have received a copy of the GNU General Public License
- *   along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
  *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 package com.owncloud.android.operations;
-
-import com.owncloud.android.datamodel.FileDataStorageManager;
-import com.owncloud.android.datamodel.OCFile;
-import com.owncloud.android.files.services.FileDownloader;
-import com.owncloud.android.files.services.FileUploader;
-import com.owncloud.android.lib.network.OwnCloudClient;
-import com.owncloud.android.lib.operations.common.RemoteFile;
-import com.owncloud.android.lib.operations.common.RemoteOperation;
-import com.owncloud.android.lib.operations.common.RemoteOperationResult;
-import com.owncloud.android.lib.operations.common.RemoteOperationResult.ResultCode;
-import com.owncloud.android.lib.operations.remote.ReadRemoteFileOperation;
-import com.owncloud.android.utils.FileStorageUtils;
-import com.owncloud.android.utils.Log_OC;
 
 import android.accounts.Account;
 import android.content.Context;
 import android.content.Intent;
 
+import com.owncloud.android.datamodel.OCFile;
+import com.owncloud.android.files.services.FileDownloader;
+import com.owncloud.android.files.services.FileUploader;
+import com.owncloud.android.files.services.TransferRequester;
+import com.owncloud.android.lib.common.OwnCloudClient;
+import com.owncloud.android.lib.common.operations.RemoteOperationResult;
+import com.owncloud.android.lib.common.operations.RemoteOperationResult.ResultCode;
+import com.owncloud.android.lib.common.utils.Log_OC;
+import com.owncloud.android.lib.resources.files.ReadRemoteFileOperation;
+import com.owncloud.android.lib.resources.files.RemoteFile;
+import com.owncloud.android.operations.common.SyncOperation;
+import com.owncloud.android.utils.FileStorageUtils;
+
 /**
- * Remote operation performing the read of remote file in the ownCloud server.
- * 
- * @author David A. Velasco
- * @author masensio
+ * Operation synchronizing the properties and contents of an OC file between local and remote copies.
  */
 
-public class SynchronizeFileOperation extends RemoteOperation {
+public class SynchronizeFileOperation extends SyncOperation {
 
     private String TAG = SynchronizeFileOperation.class.getSimpleName();
-    
+
     private OCFile mLocalFile;
+    private String mRemotePath;
     private OCFile mServerFile;
-    private FileDataStorageManager mStorageManager;
     private Account mAccount;
-    private boolean mSyncFileContents;
+    private boolean mPushOnly;
     private Context mContext;
-    
+
     private boolean mTransferWasRequested = false;
-    
+
+    /**
+     * Constructor for "full synchronization mode".
+     *
+     * Uses remotePath to retrieve all the data both in local cache and in the remote OC server
+     * when the operation is executed, instead of reusing {@link OCFile} instances.
+     *
+     * Useful for direct synchronization of a single file.
+     *
+     * @param remotePath       Path to the OCFile to sync
+     * @param account          ownCloud account holding the file.
+     * @param context          Android context; needed to start transfers.
+     */
+    public SynchronizeFileOperation(
+            String remotePath,
+            Account account,
+            Context context
+    ) {
+
+        mRemotePath = remotePath;
+        mLocalFile = null;
+        mServerFile = null;
+        mAccount = account;
+        mPushOnly = false;
+        mContext = context;
+    }
+
+
+    /**
+     * Constructor allowing to reuse {@link OCFile} instances just queried from local cache or
+     * from remote OC server.
+     *
+     * Useful to include this operation as part of the synchronization of a folder
+     * (or a full account), avoiding the repetition of fetch operations
+     * (both in local database or remote server).
+     *
+     * At least one of localFile or serverFile MUST NOT BE NULL. If you don't have none of them,
+     * use the other constructor.
+     *
+     * @param localFile        Data of file (just) retrieved from local cache/database.
+     * @param serverFile       Data of file (just) retrieved from a remote server. If null,
+     *                         will be retrieved from network by the operation when executed.
+     * @param account          ownCloud account holding the file.
+     * @param pushOnly         When 'true', if 'severFile' is NULL, will not fetch remote properties before
+     *                         trying to upload local changes; upload operation will take care of not overwriting
+     *                         remote content if there are unnoticed changes on the server.
+     * @param context          Android context; needed to start transfers.
+     */
     public SynchronizeFileOperation(
             OCFile localFile,
-            OCFile serverFile,          // make this null to let the operation checks the server; added to reuse info from SynchronizeFolderOperation 
-            FileDataStorageManager storageManager, 
-            Account account, 
-            boolean syncFileContents,
-            Context context) {
-        
+            OCFile serverFile,
+            Account account,
+            boolean pushOnly,
+            Context context
+    ) {
+
         mLocalFile = localFile;
         mServerFile = serverFile;
-        mStorageManager = storageManager;
+        if (mLocalFile != null) {
+            mRemotePath = mLocalFile.getRemotePath();
+            if (mServerFile != null && !mServerFile.getRemotePath().equals(mRemotePath)) {
+                throw new IllegalArgumentException("serverFile and localFile do not correspond" +
+                        " to the same OC file");
+            }
+        } else if (mServerFile != null) {
+            mRemotePath = mServerFile.getRemotePath();
+        } else {
+            throw new IllegalArgumentException("Both serverFile and localFile are NULL");
+        }
         mAccount = account;
-        mSyncFileContents = syncFileContents;
+        mPushOnly = pushOnly;
         mContext = context;
     }
 
@@ -77,6 +134,12 @@ public class SynchronizeFileOperation extends RemoteOperation {
 
         RemoteOperationResult result = null;
         mTransferWasRequested = false;
+
+        if (mLocalFile == null) {
+            // Get local file from the DB
+            mLocalFile = getStorageManager().getFileByPath(mRemotePath);
+        }
+
         if (!mLocalFile.isDown()) {
             /// easy decision
             requestForDownload(mLocalFile);
@@ -85,59 +148,58 @@ public class SynchronizeFileOperation extends RemoteOperation {
         } else {
             /// local copy in the device -> need to think a bit more before do anything
 
-            if (mServerFile == null) {
-                String remotePath = mLocalFile.getRemotePath();
-                ReadRemoteFileOperation operation = new ReadRemoteFileOperation(remotePath);
+            if (mServerFile == null && !mPushOnly) {
+                ReadRemoteFileOperation operation = new ReadRemoteFileOperation(mRemotePath);
                 result = operation.execute(client);
-                if (result.isSuccess()){
-                    mServerFile = FileStorageUtils.fillOCFile((RemoteFile) result.getData().get(0));
+                if (result.isSuccess()) {
+                    mServerFile = FileStorageUtils.createOCFileFrom((RemoteFile) result.getData().get(0));
                     mServerFile.setLastSyncDateForProperties(System.currentTimeMillis());
                 }
             }
 
-            if (mServerFile != null) {   
+            if (mPushOnly || mServerFile != null) { // at this point, conditions should be exclusive
 
-                /// check changes in server and local file
-                boolean serverChanged = false;
-                /* time for eTag is coming, but not yet
-                    if (mServerFile.getEtag() != null) {
-                        serverChanged = (!mServerFile.getEtag().equals(mLocalFile.getEtag()));   // TODO could this be dangerous when the user upgrades the server from non-tagged to tagged?
-                    } else { */
-                // server without etags
-                serverChanged = (mServerFile.getModificationTimestamp() != mLocalFile.getModificationTimestampAtLastSyncForData());
-                //}
-                boolean localChanged = (mLocalFile.getLocalModificationTimestamp() > mLocalFile.getLastSyncDateForData());
-                // TODO this will be always true after the app is upgraded to database version 2; will result in unnecessary uploads
+                /// decide if file changed in the server
+                boolean serverChanged;
+                if (mPushOnly) {
+                    serverChanged = false;
+                } else if (mLocalFile.getEtag() == null || mLocalFile.getEtag().length() == 0) {
+                    // file uploaded (null) or downloaded ("")
+                    // before upgrade to version 1.8.0; this is legacy condition
+                    serverChanged = mServerFile.getModificationTimestamp() !=
+                            mLocalFile.getModificationTimestampAtLastSyncForData();
+                } else {
+                    serverChanged = (!mServerFile.getEtag().equals(mLocalFile.getEtag()));
+                }
+
+                /// decide if file changed in local device
+                boolean localChanged = (
+                    mLocalFile.getLocalModificationTimestamp() >
+                        mLocalFile.getLastSyncDateForData()
+                );
 
                 /// decide action to perform depending upon changes
-                //if (!mLocalFile.getEtag().isEmpty() && localChanged && serverChanged) {
                 if (localChanged && serverChanged) {
                     result = new RemoteOperationResult(ResultCode.SYNC_CONFLICT);
+                    getStorageManager().saveConflict(mLocalFile, mServerFile.getEtag());
 
                 } else if (localChanged) {
-                    if (mSyncFileContents) {
-                        requestForUpload(mLocalFile);
-                        // the local update of file properties will be done by the FileUploader service when the upload finishes
-                    } else {
-                        // NOTHING TO DO HERE: updating the properties of the file in the server without uploading the contents would be stupid; 
-                        // So, an instance of SynchronizeFileOperation created with syncFileContents == false is completely useless when we suspect
-                        // that an upload is necessary (for instance, in FileObserverService).
+                    if(mPushOnly) {
+                        // prevent accidental override of unnoticed change in server;
+                        // dirty trick, more refactoring is needed, but not today;
+                        // works due to {@link UploadFileOperation#L364,L367}
+                        mLocalFile.setEtagInConflict(mLocalFile.getEtag());
                     }
+                    requestForUpload(mLocalFile);
                     result = new RemoteOperationResult(ResultCode.OK);
 
                 } else if (serverChanged) {
-                    if (mSyncFileContents) {
-                        requestForDownload(mLocalFile); // local, not server; we won't to keep the value of keepInSync!
-                        // the update of local data will be done later by the FileUploader service when the upload finishes
-                    } else {
-                        // TODO CHECK: is this really useful in some point in the code?
-                        mServerFile.setKeepInSync(mLocalFile.keepInSync());
-                        mServerFile.setLastSyncDateForData(mLocalFile.getLastSyncDateForData());
-                        mServerFile.setStoragePath(mLocalFile.getStoragePath());
-                        mServerFile.setParentId(mLocalFile.getParentId());
-                        mStorageManager.saveFile(mServerFile);
-
-                    }
+                    mLocalFile.setRemoteId(mServerFile.getRemoteId());
+                    requestForDownload(mLocalFile);
+                        // mLocalFile, not mServerFile; we want to keep the value of
+                        // available-offline property
+                        // the update of local data will be done later by the FileUploader
+                        // service when the upload finishes
                     result = new RemoteOperationResult(ResultCode.OK);
 
                 } else {
@@ -145,38 +207,38 @@ public class SynchronizeFileOperation extends RemoteOperation {
                     result = new RemoteOperationResult(ResultCode.OK);
                 }
 
-            } 
+                // safe blanket: sync'ing a not in-conflict file will clean wrong conflict markers in ancestors
+                if (result.getCode() != ResultCode.SYNC_CONFLICT) {
+                    getStorageManager().saveConflict(mLocalFile, null);
+                }
+            }
 
         }
 
-        Log_OC.i(TAG, "Synchronizing " + mAccount.name + ", file " + mLocalFile.getRemotePath() + ": " + result.getLogMessage());
+        Log_OC.i(TAG, "Synchronizing " + mAccount.name + ", file " + mLocalFile.getRemotePath() +
+                ": " + result.getLogMessage());
 
         return result;
     }
 
-    
+
     /**
      * Requests for an upload to the FileUploader service
-     * 
-     * @param file     OCFile object representing the file to upload
+     *
+     * @param file OCFile object representing the file to upload
      */
     private void requestForUpload(OCFile file) {
-        Intent i = new Intent(mContext, FileUploader.class);
-        i.putExtra(FileUploader.KEY_ACCOUNT, mAccount);
-        i.putExtra(FileUploader.KEY_FILE, file);
-        /*i.putExtra(FileUploader.KEY_REMOTE_FILE, mRemotePath);    // doing this we would lose the value of keepInSync in the road, and maybe it's not updated in the database when the FileUploader service gets it!  
-        i.putExtra(FileUploader.KEY_LOCAL_FILE, localFile.getStoragePath());*/
-        i.putExtra(FileUploader.KEY_UPLOAD_TYPE, FileUploader.UPLOAD_SINGLE_FILE);
-        i.putExtra(FileUploader.KEY_FORCE_OVERWRITE, true);
-        mContext.startService(i);
+        TransferRequester requester = new TransferRequester();
+        requester.uploadUpdate(mContext, mAccount, file, FileUploader.LOCAL_BEHAVIOUR_MOVE, true);
+
         mTransferWasRequested = true;
     }
 
 
     /**
      * Requests for a download to the FileDownloader service
-     * 
-     * @param file     OCFile object representing the file to download
+     *
+     * @param file OCFile object representing the file to download
      */
     private void requestForDownload(OCFile file) {
         Intent i = new Intent(mContext, FileDownloader.class);

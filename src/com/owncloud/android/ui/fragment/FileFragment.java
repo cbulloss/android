@@ -1,5 +1,8 @@
-/* ownCloud Android client application
- *   Copyright (C) 2012-2013  ownCloud Inc.
+/**
+ *   ownCloud Android client application
+ *
+ *   @author David A. Velasco
+ *   Copyright (C) 2016 ownCloud GmbH.
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License version 2,
@@ -17,42 +20,35 @@
 
 package com.owncloud.android.ui.fragment;
 
+import android.content.Context;
 import android.support.v4.app.Fragment;
 
-import com.actionbarsherlock.app.SherlockFragment;
 import com.owncloud.android.datamodel.OCFile;
-import com.owncloud.android.ui.activity.TransferServiceGetter;
+import com.owncloud.android.files.services.FileDownloader;
+import com.owncloud.android.files.services.FileUploader;
+import com.owncloud.android.ui.activity.ComponentsGetter;
 
 
 /**
  * Common methods for {@link Fragment}s containing {@link OCFile}s
- * 
- * @author David A. Velasco
- *
  */
-public class FileFragment extends SherlockFragment {
+public abstract class FileFragment extends Fragment {
     
     private OCFile mFile;
+    
+    protected ContainerActivity mContainerActivity;
 
 
     /**
      * Creates an empty fragment.
      * 
-     * It's necessary to keep a public constructor without parameters; the system uses it when tries to reinstantiate a fragment automatically. 
+     * It's necessary to keep a public constructor without parameters; the system uses it when
+     * tries to reinstantiate a fragment automatically.
      */
     public FileFragment() {
         mFile = null;
     }
     
-    /**
-     * Creates an instance for a given {@OCFile}.
-     * 
-     * @param file
-     */
-    public FileFragment(OCFile file) {
-        mFile = file;
-    }
-
     /**
      * Getter for the hold {@link OCFile}
      * 
@@ -66,27 +62,82 @@ public class FileFragment extends SherlockFragment {
     protected void setFile(OCFile file) {
         mFile = file;
     }
+    
+    
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void onAttach(Context context) {
+        super.onAttach(context);
+        try {
+            mContainerActivity = (ContainerActivity) context;
+            
+        } catch (ClassCastException e) {
+            throw new ClassCastException(context.toString() + " must implement " +
+                    ContainerActivity.class.getSimpleName());
+        }
+    }
+    
+    
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void onDetach() {
+        mContainerActivity = null;
+        super.onDetach();
+    }
+
+
+    public void onSyncEvent(String syncEvent, boolean success, OCFile updatedFile) {
+        if (syncEvent.equals(FileUploader.getUploadStartMessage())) {
+            updateViewForSyncInProgress();
+
+        } else if (syncEvent.equals(FileUploader.getUploadFinishMessage())) {
+            if (success) {
+                if (updatedFile != null) {
+                    onFileMetadataChanged(updatedFile);
+                } else {
+                    onFileMetadataChanged();
+                }
+            }
+            updateViewForSyncOff();
+
+        } else if (syncEvent.equals(FileDownloader.getDownloadAddedMessage())) {
+            updateViewForSyncInProgress();
+
+        } else if (syncEvent.equals(FileDownloader.getDownloadFinishMessage())) {
+            if (success) {
+                if (updatedFile != null) {
+                    onFileMetadataChanged(updatedFile);
+                } else {
+                    onFileMetadataChanged();
+                }
+                onFileContentChanged();
+            }
+            updateViewForSyncOff();
+        }
+    }
+
+    public abstract void updateViewForSyncInProgress();
+
+    public abstract void updateViewForSyncOff();
+
+    public abstract void onTransferServiceConnected();
+
+    public abstract void onFileMetadataChanged(OCFile updatedFile);
+
+    public abstract void onFileMetadataChanged();
+
+    public abstract void onFileContentChanged();
+
 
     /**
+     * Interface to implement by any Activity that includes some instance of FileListFragment
      * Interface to implement by any Activity that includes some instance of FileFragment
-     * 
-     * @author David A. Velasco
      */
-    public interface ContainerActivity extends TransferServiceGetter {
-
-        /**
-         * Callback method invoked when the detail fragment wants to notice its container 
-         * activity about a relevant state the file shown by the fragment.
-         * 
-         * Added to notify to FileDisplayActivity about the need of refresh the files list. 
-         * 
-         * Currently called when:
-         *  - a download is started;
-         *  - a rename is completed;
-         *  - a deletion is completed;
-         *  - the 'inSync' flag is changed;
-         */
-        public void onFileStateChanged();
+    public interface ContainerActivity extends ComponentsGetter {
 
         /**
          * Request the parent activity to show the details of an {@link OCFile}.
@@ -95,6 +146,17 @@ public class FileFragment extends SherlockFragment {
          */
         public void showDetails(OCFile file);
 
+        
+        ///// TO UNIFY IN A SINGLE CALLBACK METHOD - EVENT NOTIFICATIONs  -> something happened
+        // inside the fragment, MAYBE activity is interested --> unify in notification method
+        /**
+         * Callback method invoked when a the user browsed into a different folder through the
+         * list of files
+         *  
+         * @param folder
+         */
+        public void onBrowsedDownTo(OCFile folder);                 
+
     }
-    
+
 }

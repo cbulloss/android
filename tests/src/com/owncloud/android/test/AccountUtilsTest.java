@@ -1,6 +1,8 @@
-/* ownCloud Android client application
+/**
+ *   ownCloud Android client application
+ *
  *   Copyright (C) 2012  Bartek Przybylski
- *   Copyright (C) 2012-2013 ownCloud Inc.
+ *   Copyright (C) 2016 ownCloud GmbH.
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License version 2,
@@ -18,8 +20,8 @@
 
 package com.owncloud.android.test;
 
-import com.owncloud.android.lib.accounts.AccountUtils;
-import com.owncloud.android.lib.utils.OwnCloudVersion;
+import com.owncloud.android.lib.common.accounts.AccountUtils;
+import com.owncloud.android.lib.resources.status.OwnCloudVersion;
 
 import android.test.AndroidTestCase;
 

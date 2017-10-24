@@ -1,5 +1,8 @@
-/* ownCloud Android client application
- *   Copyright (C) 2012-2013 ownCloud Inc.
+/**
+ *   ownCloud Android client application
+ *
+ *   @author David A. Velasco
+ *   Copyright (C) 2016 ownCloud GmbH.
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License version 2,
@@ -39,15 +42,13 @@ import android.view.Window;
 import android.widget.Button;
 import android.widget.TextView;
 
-import com.owncloud.android.lib.network.CertificateCombinedException;
-import com.owncloud.android.lib.network.NetworkUtils;
-import com.owncloud.android.lib.operations.common.RemoteOperationResult;
-import com.owncloud.android.utils.Log_OC;
+import com.owncloud.android.lib.common.network.CertificateCombinedException;
+import com.owncloud.android.lib.common.network.NetworkUtils;
+import com.owncloud.android.lib.common.operations.RemoteOperationResult;
+import com.owncloud.android.lib.common.utils.Log_OC;
 
 /**
  * Dialog to request the user about a certificate that could not be validated with the certificates store in the system.
- * 
- * @author David A. Velasco
  */
 public class SslValidatorDialog extends Dialog {
 
@@ -223,6 +224,7 @@ public class SslValidatorDialog extends Dialog {
         return hex.toString();
      }    
 
+    @SuppressWarnings("deprecation")
     private void showValidity(Date notBefore, Date notAfter) {
         TextView fromView = ((TextView)mView.findViewById(R.id.value_validity_from));
         TextView toView = ((TextView)mView.findViewById(R.id.value_validity_to));
